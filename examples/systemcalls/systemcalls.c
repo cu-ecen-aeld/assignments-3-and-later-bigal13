@@ -1,4 +1,12 @@
 #include "systemcalls.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <unistd.h> // for dup2(), STDOUT_FILENO
+#include <stdarg.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <fcntl.h> // for open(), O_WRONLY, O_CREAT, etc
 
 /**
  * @param cmd the command to execute with system()
@@ -17,7 +25,15 @@ bool do_system(const char *cmd)
  *   or false() if it returned a failure
 */
 
-    return true;
+// call the system() function with the command set in the cmd
+int status = system(cmd);
+
+if (status==0) {
+    return true; // completed with success
+} else {
+    return false; // returned a failure
+}
+
 }
 
 /**
@@ -45,24 +61,58 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
-
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *
-*/
-
     va_end(args);
+    /*
+    * TODO:
+    *   Execute a system command by calling fork, execv(),
+    *   and wait instead of system (see LSP page 161).
+    *   Use the command[0] as the full path to the command to execute
+    *   (first argument to execv), and use the remaining arguments
+    *   as second argument to the execv() command.
+    *
+    */
 
+    // flush stdout
+    fflush(stdout);
+
+    // fork a child process and check if failed
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        return false;
+    } else if (pid == 0) { 
+        // we are in the child process
+        // here we execute the command with it's arguments using execv
+        execv(command[0], command);
+
+        // execv only returns on errors
+        exit(EXIT_FAILURE);
+        // after this exit(), the parent is notified of the exit status and child dies
+        // immediately if the parent was waiting, else it becomes a zombie
+    } else {
+        // we are in the parent process
+        // here we wait for the child process using waitpid()
+        int status;
+
+        if (waitpid(pid, &status, 0) == -1) {
+            return false;
+        }
+
+        // now we check the status of the child process
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+            // this is the case where the child process exited normally and the
+            // command returned a zero exit status! yay
+            return true;
+        } else {
+            // something went wrong, either in the command or the child process
+            return false;
+        }
+    }
     return true;
+
 }
+    
+
 
 /**
 * @param outputfile - The full path to the file to write with command output.
@@ -80,11 +130,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
-
-
+    
 /*
  * TODO
  *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
@@ -93,7 +139,52 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *
 */
 
-    va_end(args);
+    // open the output file; write only mode
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+    if (fd == -1) {
+        return false;
+    }
 
+    // similar flow to the above do_exec() function
+    fflush(stdout);
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        return false;
+    } else if (pid == 0) { 
+        // we are in the child process
+        if (dup2(fd, 1) < 0) {
+            perror("Dup2 error.");
+            exit(EXIT_FAILURE);
+        }
+        close(fd);
+        // here we execute the command with it's arguments using execv
+        execv(command[0], command);
+
+        // execv only returns on errors
+        exit(EXIT_FAILURE);
+        // after this exit(), the parent is notified of the exit status and child dies
+        // immediately if the parent was waiting, else it becomes a zombie
+    } else {
+        close (fd);
+        // we are in the parent process
+        // here we wait for the child process using waitpid()
+        int status;
+
+        if (waitpid(pid, &status, 0) == -1) {
+            return false;
+        }
+
+        // now we check the status of the child process
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+            // this is the case where the child process exited normally and the
+            // command returned a zero exit status! yay
+            return true;
+        } else {
+            // something went wrong, either in the command or the child process
+            return false;
+        }
+    }
+    va_end(args);
     return true;
 }
