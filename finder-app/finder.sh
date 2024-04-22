@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # first we need this statement above
 
 # check if the number of arguments is correct using the $# variable

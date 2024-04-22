@@ -7,8 +7,8 @@ set -u
 
 OUTDIR=/tmp/aeld
 KERNEL_REPO=git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git
-KERNEL_VERSION=v5.1.10
-BUSYBOX_VERSION=1_33_1
+KERNEL_VERSION=v6.8.6
+BUSYBOX_VERSION=1_36_1
 FINDER_APP_DIR=$(realpath $(dirname $0))
 ARCH=arm64
 CROSS_COMPILE=aarch64-none-linux-gnu-
@@ -23,6 +23,7 @@ fi
 
 mkdir -p ${OUTDIR}
 
+# want to clone the files in OUTDIR
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/linux-stable" ]; then
     #Clone only if the repository does not exist.
@@ -35,46 +36,98 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     git checkout ${KERNEL_VERSION}
 
     # TODO: Add your kernel build steps here
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} mrproper # deep clean
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig # configure for our "virt" arm dev board
+    make -j4 ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} all # build a kernel image for booting with QEMU
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules # build any kernel modules
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} dtbs # build the device tree
+
 fi
 
 echo "Adding the Image in outdir"
+cp ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ${OUTDIR}
 
 echo "Creating the staging directory for the root filesystem"
 cd "$OUTDIR"
 if [ -d "${OUTDIR}/rootfs" ]
 then
+    # start from scratch
 	echo "Deleting rootfs directory at ${OUTDIR}/rootfs and starting over"
     sudo rm  -rf ${OUTDIR}/rootfs
 fi
 
 # TODO: Create necessary base directories
+mkdir ${OUTDIR}/rootfs
+cd "${OUTDIR}/rootfs"
+mkdir -p bin dev etc home lib lib64 proc sbin sys tmp usr var
+mkdir -p usr/bin usr/lib usr/sbin
+mkdir -p var/log
 
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
 then
-git clone git://busybox.net/busybox.git
+    git clone git://busybox.net/busybox.git
     cd busybox
     git checkout ${BUSYBOX_VERSION}
     # TODO:  Configure busybox
+    make distclean
+    make defconfig
 else
     cd busybox
 fi
 
 # TODO: Make and install busybox
+make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}
+make CONFIG_PREFIX=${OUTDIR}/rootfs ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} install
 
 echo "Library dependencies"
+cd ${OUTDIR}/rootfs
 ${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
 ${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
+# to do this programmatically we need to parse the output from above
+# and copy over the correct files
 
+# first let's locate the cross-compiler; the readelf utility is located in the bin
+# directory so we can find that and back out two dirs
+CC_DIR=$(dirname $(dirname $(which ${CROSS_COMPILE}readelf)))
+libs_to_get="$(${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter" | grep -Po 'program interpreter: \K[^]]*')"
+echo "$libs_to_get" | while IFS= read -r lib_file; do
+    find $CC_DIR -name "$(basename $lib_file)" | xargs -I {} cp {} ${OUTDIR}/rootfs$(dirname $lib_file)
+done
+# shared library
+libs_to_get="$(${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library" | grep -Po 'Shared library: \[\K[^]]*')"
+echo "$libs_to_get" | while IFS= read -r lib_file; do
+    find $CC_DIR -name "$(basename $lib_file)" | xargs -I {} cp {} ${OUTDIR}/rootfs/lib64
+done
+
+cd ${OUTDIR}/rootfs
 # TODO: Make device nodes
+sudo mknod -m 666 dev/null c 1 3
+sudo mknod -m 666 dev/console c 5 1
 
 # TODO: Clean and build the writer utility
+cd ${FINDER_APP_DIR}
+make clean
+make CROSS_COMPILE=${CROSS_COMPILE}
 
 # TODO: Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
+cp ${FINDER_APP_DIR}/writer ${OUTDIR}/rootfs/home
+cp ${FINDER_APP_DIR}/finder.sh ${OUTDIR}/rootfs/home
+cp ${FINDER_APP_DIR}/finder-test.sh ${OUTDIR}/rootfs/home
+cp ${FINDER_APP_DIR}/autorun-qemu.sh ${OUTDIR}/rootfs/home
+
+mkdir -p ${OUTDIR}/rootfs/home/conf
+cp ${FINDER_APP_DIR}/conf/assignment.txt ${OUTDIR}/rootfs/home/conf
+cp ${FINDER_APP_DIR}/conf/username.txt ${OUTDIR}/rootfs/home/conf
 
 # TODO: Chown the root directory
+cd ${OUTDIR}/rootfs
+sudo chown -R root:root *
 
 # TODO: Create initramfs.cpio.gz
+find . | cpio -H newc -ov --owner root:root > ${OUTDIR}/initramfs.cpio
+cd ${OUTDIR}
+gzip -f initramfs.cpio
