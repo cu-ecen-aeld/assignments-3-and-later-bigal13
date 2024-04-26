@@ -16,10 +16,8 @@ then
 else
 	CONFDIR="conf"
 fi
-echo ${CONFDIR}
 
 username=$(cat ${CONFDIR}/username.txt)
-echo $username
 
 if [ $# -lt 3 ]
 then
