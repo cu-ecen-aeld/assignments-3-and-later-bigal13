@@ -227,7 +227,6 @@ int main(int argc, char *argv[]) {
 
                 // move to start of the file
                 if (lseek(outputfd, 0, SEEK_SET) == -1) {
-                    syslog(LOG_DEBUG, "inside error of lseek");
                     perror("Failed to move to start of output file");
                     close(clientfd);
                     close(outputfd);
@@ -239,7 +238,6 @@ int main(int argc, char *argv[]) {
                 while ((n = read(outputfd, readbuf, sizeof(readbuf))) > 0) {
                     syslog(LOG_DEBUG, "inside read output file loop");
                     if (send(clientfd, readbuf, n, 0) == -1) {
-                        syslog(LOG_DEBUG, "inside send client error");
                         perror("Failed to send data to client");
                         close(clientfd);
                         close(outputfd);
@@ -256,15 +254,15 @@ int main(int argc, char *argv[]) {
 
                 // we're at the end of the file and we can copy any other bytes after the new line
                 // location to our buffer
-                // size_t max_buffer_len = (size_t)MAX_BUFFER;
-                // if (i < num_bytes) {
-                //     outbuf_len = num_bytes - i - 1; // buffer length of the remaining bytes
-                //     if (max_buffer_len < outbuf_len + outbuf_len + 1) {
-                //         max_buffer_len += outbuf_len + 2 * outbuf_len;
-                //         *buf = realloc(*buf, max_buffer_len);
-                //     }
-                //     strncat(*buf, inbuf[i+1], outbuf_len);
-                // }
+                size_t max_buffer_len = (size_t)MAX_BUFFER;
+                if (i < num_bytes) {
+                    outbuf_len = num_bytes - i - 1; // buffer length of the remaining bytes
+                    if (max_buffer_len < outbuf_len + outbuf_len + 1) {
+                        max_buffer_len += outbuf_len + 2 * outbuf_len;
+                        *buf = realloc(*buf, max_buffer_len);
+                    }
+                    strncat(*buf, &inbuf[i+1], outbuf_len);
+                }
             }
         }
 
